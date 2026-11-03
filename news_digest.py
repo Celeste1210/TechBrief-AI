@@ -2,7 +2,7 @@
 每日國際科技新聞整理 → 中英對照 → 發送到 Discord
 
 流程：抓 RSS → 篩選過去 24 小時的新聞 → 請 AI 挑重點並翻譯 → 用 Webhook 發到 Discord
-預設使用 GitHub Models（免費，在 GitHub Actions 中自動使用 GITHUB_TOKEN）
+預設使用 Google Gemini API 免費方案（需要 GEMINI_API_KEY）
 """
 
 import json
@@ -31,17 +31,13 @@ LOOKBACK_HOURS = 24       # 只看過去多少小時的新聞
 FOCUS = "AI、半導體、能源與儲能、資安、重大科技公司動態"   # 想優先關注的主題
 
 # AI 供應商設定（可在 workflow 的 env 覆寫）
-PROVIDER = os.getenv("AI_PROVIDER", "github")   # github 或 gemini
+PROVIDER = os.getenv("AI_PROVIDER", "gemini")
 PROVIDERS = {
-    "github": {
-        "url": "https://models.github.ai/inference/chat/completions",
-        "key_env": "GITHUB_TOKEN",
-        "model": os.getenv("AI_MODEL", "openai/gpt-4.1-mini"),
-    },
     "gemini": {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "key_env": "GEMINI_API_KEY",
-        "model": os.getenv("AI_MODEL", "gemini-2.5-flash"),
+        # gemini-flash-latest 會自動指向最新的 Flash 模型，不怕舊型號下架
+        "model": os.getenv("AI_MODEL") or "gemini-flash-latest",
     },
 }
 
@@ -136,8 +132,13 @@ def ask_ai(articles):
             print("[提示] 遇到速率限制，60 秒後重試")
             time.sleep(60)
             continue
-        resp.raise_for_status()
-        text = resp.json()["choices"][0]["message"]["content"]
+        if not resp.ok:
+            sys.exit(f"[錯誤] AI API 回傳 {resp.status_code}：{resp.text[:500]}")
+        try:
+            text = resp.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError):
+            print(f"[警告] AI 回應無法解析：{resp.text[:500]}")
+            continue
         text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
         try:
             return json.loads(text)["items"]
