@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  models: read                 # 使用 GitHub Models 必須加這行
 
 jobs:
   digest:
@@ -24,9 +23,6 @@ jobs:
 
       - name: Run digest
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          AI_PROVIDER: github
-          # 想改用 Gemini：把上面改成 gemini，並取消下一行註解
-          # GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python news_digest.py
