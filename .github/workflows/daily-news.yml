@@ -1,0 +1,32 @@
+name: Daily Tech News
+
+on:
+  schedule:
+    - cron: "30 0 * * *"      # UTC 00:30 = 台灣時間每天早上 08:30
+  workflow_dispatch:           # 允許在 Actions 頁面手動執行（測試用）
+
+permissions:
+  contents: read
+  models: read                 # 使用 GitHub Models 必須加這行
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Run digest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          AI_PROVIDER: github
+          # 想改用 Gemini：把上面改成 gemini，並取消下一行註解
+          # GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python news_digest.py
