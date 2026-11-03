@@ -38,6 +38,8 @@ PROVIDERS = {
         "key_env": "GEMINI_API_KEY",
         # gemini-flash-latest 會自動指向最新的 Flash 模型，不怕舊型號下架
         "model": os.getenv("AI_MODEL") or "gemini-flash-latest",
+        # 主要模型忙線時，自動改用這個備用模型
+        "fallback": "gemini-flash-lite-latest",
     },
 }
 
@@ -118,32 +120,35 @@ def ask_ai(articles):
     prompt = PROMPT.format(n=TOP_N, focus=FOCUS,
                            articles=json.dumps(compact, ensure_ascii=False))
 
-    for attempt in range(3):
-        resp = requests.post(
-            cfg["url"],
-            headers={"Authorization": f"Bearer {api_key}",
-                     "Content-Type": "application/json"},
-            json={"model": cfg["model"],
-                  "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3},
-            timeout=120,
-        )
-        if resp.status_code == 429:           # 速率限制：等一下再試
-            print("[提示] 遇到速率限制，60 秒後重試")
-            time.sleep(60)
-            continue
-        if not resp.ok:
-            sys.exit(f"[錯誤] AI API 回傳 {resp.status_code}：{resp.text[:500]}")
-        try:
-            text = resp.json()["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError):
-            print(f"[警告] AI 回應無法解析：{resp.text[:500]}")
-            continue
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-        try:
-            return json.loads(text)["items"]
-        except (json.JSONDecodeError, KeyError):
-            print(f"[警告] AI 回傳格式不正確，重試（第 {attempt + 1} 次）")
+    models = [cfg["model"]] + ([cfg["fallback"]] if cfg.get("fallback") else [])
+    for model in models:
+        for attempt in range(3):
+            resp = requests.post(
+                cfg["url"],
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": model,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.3},
+                timeout=180,
+            )
+            # 429 速率限制、500/503 伺服器忙線：等一下再試
+            if resp.status_code in (429, 500, 502, 503, 504):
+                wait = 20 * (attempt + 1)
+                print(f"[提示] {model} 回傳 {resp.status_code}，{wait} 秒後重試（第 {attempt + 1} 次）")
+                time.sleep(wait)
+                continue
+            if not resp.ok:
+                sys.exit(f"[錯誤] AI API 回傳 {resp.status_code}：{resp.text[:500]}")
+            try:
+                text = resp.json()["choices"][0]["message"]["content"]
+                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+                items = json.loads(text)["items"]
+                print(f"使用模型：{model}")
+                return items
+            except (ValueError, KeyError, IndexError, TypeError):
+                print(f"[警告] AI 回應格式不正確，重試：{resp.text[:300]}")
+        print(f"[提示] {model} 暫時無法使用，改用備用模型")
     sys.exit("[錯誤] AI 呼叫失敗")
 
 # ───────────── 3. 發送到 Discord ─────────────
