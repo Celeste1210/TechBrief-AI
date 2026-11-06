@@ -26,7 +26,7 @@ RSS_FEEDS = {
 }
 
 TOP_N = 5                 # 每天挑幾則
-MAX_PER_FEED = 8          # 每個來源最多取幾則候選（控制送給 AI 的長度）
+MAX_PER_FEED = 6          # 每個來源最多取幾則候選（控制送給 AI 的長度）
 LOOKBACK_HOURS = 24       # 只看過去多少小時的新聞
 FOCUS = "AI、半導體、能源與儲能、資安、重大科技公司動態"   # 想優先關注的主題
 
@@ -122,21 +122,36 @@ def ask_ai(articles):
 
     models = [cfg["model"]] + ([cfg["fallback"]] if cfg.get("fallback") else [])
     for model in models:
+        use_reasoning = True
         for attempt in range(3):
-            resp = requests.post(
-                cfg["url"],
-                headers={"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": model,
-                      "messages": [{"role": "user", "content": prompt}],
-                      "temperature": 0.3},
-                timeout=180,
-            )
+            body = {"model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3}
+            if use_reasoning:
+                body["reasoning_effort"] = "low"   # 降低模型「思考」時間，回應更快、較不會逾時
+            try:
+                resp = requests.post(
+                    cfg["url"],
+                    headers={"Authorization": f"Bearer {api_key}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                    timeout=150,
+                )
+            except requests.exceptions.RequestException as e:
+                # 逾時或連線中斷：不要直接當掉，等一下重試
+                print(f"[提示] {model} 連線失敗或逾時（{type(e).__name__}），15 秒後重試（第 {attempt + 1} 次）")
+                time.sleep(15)
+                continue
             # 429 速率限制、500/503 伺服器忙線：等一下再試
             if resp.status_code in (429, 500, 502, 503, 504):
                 wait = 20 * (attempt + 1)
                 print(f"[提示] {model} 回傳 {resp.status_code}，{wait} 秒後重試（第 {attempt + 1} 次）")
                 time.sleep(wait)
+                continue
+            if resp.status_code == 400 and use_reasoning and "reasoning" in resp.text.lower():
+                # 少數模型不支援 reasoning_effort 參數：拿掉後再試
+                print(f"[提示] {model} 不支援 reasoning_effort，改用一般模式重試")
+                use_reasoning = False
                 continue
             if not resp.ok:
                 sys.exit(f"[錯誤] AI API 回傳 {resp.status_code}：{resp.text[:500]}")
